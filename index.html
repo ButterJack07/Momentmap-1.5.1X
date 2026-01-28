@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>此刻地图1.5.1-WEB-0.1</title>
+<title>此刻地图1.5.1-WEB-0.2</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
 html,body{margin:0;height:100%;overflow:hidden;font-family:Arial}
@@ -128,8 +128,7 @@ window.onload=()=>{
 function login(){
   currentUser=usernameInput.value.trim();
   if(!currentUser)return;
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-socket = new WebSocket(`${protocol}://ws.mapnow.ggff.net`);
+    socket = new WebSocket("ws://114.55.106.27:3000");
 
 
   socket.onopen=()=>{
@@ -318,5 +317,6 @@ function sendChat(){
 </script>
 </body>
 </html>
+
 
 
