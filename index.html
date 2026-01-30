@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>MomentMap · Cloudflare + WSS</title>
+<title>MomentMap PRO 0.0.1</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
 html,body{margin:0;height:100%;overflow:hidden;font-family:Arial}
@@ -96,230 +96,245 @@ html,body{margin:0;height:100%;overflow:hidden;font-family:Arial}
 
 <script>
 /* =======================
-   方案 A：固定 WSS 地址
+   WebSocket 自动识别逻辑
    ======================= */
+// 自动将 https:// 替换为 wss://，并在路径后追加 /ws
+const WS_URL = window.location.origin.replace(/^http/, 'ws') + "/ws";
 
-// 🔴 改这里即可（必须是 wss）
-const WS_URL = "wss://ws.yourdomain.com";
+let map, socket, currentUser;
+let myPos = null, visibleRange = 1000;
+let users = [];
+let markers = {}, ranges = {};
+let currentTab = "public";
+let chats = { public: [] };
+let pingInterval;
 
-let map,socket,currentUser;
-let myPos=null,visibleRange=1000;
-let users=[];
-let markers={},ranges={};
-let currentTab="public";
-let chats={ public:[] };
-
-window.onload=()=>{
-  map = new qq.maps.Map(document.getElementById("map"),{
-    center:new qq.maps.LatLng(31.28,121.5),
-    zoom:14,
-    keyboardShortcuts:false
+window.onload = () => {
+  map = new qq.maps.Map(document.getElementById("map"), {
+    center: new qq.maps.LatLng(31.28, 121.5),
+    zoom: 14,
+    keyboardShortcuts: false
   });
 
-  qq.maps.event.addListener(map,"click",e=>{
-    if(locMode.value!=="manual")return;
-    updateMyPos(e.latLng.getLat(),e.latLng.getLng());
+  qq.maps.event.addListener(map, "click", e => {
+    if (locMode.value !== "manual") return;
+    updateMyPos(e.latLng.getLat(), e.latLng.getLng());
     sendPosition();
   });
 
-  chatInput.addEventListener("keydown",e=>{
+  chatInput.addEventListener("keydown", e => {
     e.stopPropagation();
-    if(e.key==="Enter")sendChat();
+    if (e.key === "Enter") sendChat();
   });
 
-  chatInput.addEventListener("mousedown",e=>{
+  chatInput.addEventListener("mousedown", e => {
     e.stopPropagation();
     chatInput.focus();
   });
 
-  debugBtn.onclick=()=>{
-    debugPanel.style.display=
-      debugPanel.style.display==="none"?"block":"none";
+  debugBtn.onclick = () => {
+    debugPanel.style.display = debugPanel.style.display === "none" ? "block" : "none";
   };
 
-  rangeSelect.onchange=e=>{
-    visibleRange=parseInt(e.target.value);
+  rangeSelect.onchange = e => {
+    visibleRange = parseInt(e.target.value);
     updateRange();
     refreshMarkers();
     sendPosition();
   };
 
-  locMode.onchange=e=>e.target.value==="gps"&&useGPS();
-  loginBtn.onclick=login;
+  locMode.onchange = e => e.target.value === "gps" && useGPS();
+  loginBtn.onclick = login;
 };
 
 /* ========= 登录 & WebSocket ========= */
-function login(){
-  currentUser=usernameInput.value.trim();
-  if(!currentUser)return;
+function login() {
+  currentUser = usernameInput.value.trim();
+  if (!currentUser) return;
 
-  socket=new WebSocket(WS_URL);
+  console.log("正在尝试连接:", WS_URL);
+  socket = new WebSocket(WS_URL);
 
-  socket.onopen=()=>{
-    loginMask.style.display="none";
-    chatPanel.style.display="flex";
-    addTab("public","公屏");
+  socket.onopen = () => {
+    console.log("✅ WebSocket 连接成功");
+    loginMask.style.display = "none";
+    chatPanel.style.display = "flex";
+    addTab("public", "公屏");
+    
+    // 登录消息
     socket.send(JSON.stringify({
-      type:"login",
-      username:currentUser
+      type: "login",
+      username: currentUser
     }));
+
+    // 设置心跳，防止 Cloudflare 自动断开（每30秒发一次心跳包）
+    if(pingInterval) clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if(socket.readyState === 1) socket.send(JSON.stringify({type:"ping"}));
+    }, 30000);
   };
 
-  socket.onmessage=e=>{
-    const d=JSON.parse(e.data);
-    if(d.type==="users"){
-      users=d.list;
+  socket.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === "users") {
+      users = d.list;
       refreshMarkers();
     }
-    if(d.type==="chat"){
-      const key=d.to?(d.from===currentUser?d.to:d.from):"public";
-      if(!chats[key]){
-        chats[key]=[];
-        addTab(key,key);
+    if (d.type === "chat") {
+      const key = d.to ? (d.from === currentUser ? d.to : d.from) : "public";
+      if (!chats[key]) {
+        chats[key] = [];
+        addTab(key, key);
       }
       chats[key].push(`${d.from}：${d.msg}`);
-      if(key===currentTab)renderChat();
+      if (key === currentTab) renderChat();
     }
   };
 
-  socket.onclose=()=>{
-    alert("WebSocket 已断开");
+  socket.onclose = (event) => {
+    console.warn("⚠️ WebSocket 断开:", event.code, event.reason);
+    alert("连接已断开，请刷新页面重试");
+    if(pingInterval) clearInterval(pingInterval);
+  };
+
+  socket.onerror = (err) => {
+    console.error("❌ WebSocket 错误:", err);
   };
 }
 
-/* ========= 定位 ========= */
-function updateMyPos(lat,lng){
-  myPos={lat,lng};
+/* ========= 定位逻辑 ========= */
+function updateMyPos(lat, lng) {
+  myPos = { lat, lng };
   updateRange();
   refreshMarkers();
 }
 
-function useGPS(){
-  navigator.geolocation?.getCurrentPosition(p=>{
-    updateMyPos(p.coords.latitude,p.coords.longitude);
-    map.setCenter(new qq.maps.LatLng(myPos.lat,myPos.lng));
+function useGPS() {
+  navigator.geolocation?.getCurrentPosition(p => {
+    updateMyPos(p.coords.latitude, p.coords.longitude);
+    map.setCenter(new qq.maps.LatLng(myPos.lat, myPos.lng));
     sendPosition();
-  },()=>alert("GPS 获取失败"));
+  }, () => alert("GPS 获取失败"));
 }
 
-function sendPosition(){
-  if(socket?.readyState===1 && myPos){
+function sendPosition() {
+  if (socket?.readyState === 1 && myPos) {
     socket.send(JSON.stringify({
-      type:"position",
-      lat:myPos.lat,
-      lng:myPos.lng
+      type: "position",
+      lat: myPos.lat,
+      lng: myPos.lng
     }));
   }
 }
 
-function updateRange(){
-  if(!myPos)return;
+function updateRange() {
+  if (!myPos) return;
   ranges.self?.setMap(null);
-  ranges.self=new qq.maps.Circle({
+  ranges.self = new qq.maps.Circle({
     map,
-    center:new qq.maps.LatLng(myPos.lat,myPos.lng),
-    radius:visibleRange,
-    fillColor:new qq.maps.Color(52,152,219,0.3),
-    strokeWeight:1
+    center: new qq.maps.LatLng(myPos.lat, myPos.lng),
+    radius: visibleRange,
+    fillColor: new qq.maps.Color(52, 152, 219, 0.3),
+    strokeWeight: 1
   });
 }
 
-function refreshMarkers(){
-  if(!myPos)return;
-  const me=new qq.maps.LatLng(myPos.lat,myPos.lng);
+function refreshMarkers() {
+  if (!myPos) return;
+  const me = new qq.maps.LatLng(myPos.lat, myPos.lng);
 
-  if(!markers[currentUser]){
-    markers[currentUser]=new qq.maps.Marker({
-      map,position:me,
-      label:{content:currentUser,offset:new qq.maps.Size(0,-20)}
+  if (!markers[currentUser]) {
+    markers[currentUser] = new qq.maps.Marker({
+      map, position: me,
+      label: { content: currentUser, offset: new qq.maps.Size(0, -20) }
     });
-  }else{
+  } else {
     markers[currentUser].setPosition(me);
     markers[currentUser].setMap(map);
   }
 
-  users.forEach(u=>{
-    if(u.username===currentUser||!u.lat)return;
-    const pos=new qq.maps.LatLng(u.lat,u.lng);
-    const dist=qq.maps.geometry.spherical
-      .computeDistanceBetween(me,pos);
-    if(dist>visibleRange){
+  users.forEach(u => {
+    if (u.username === currentUser || !u.lat) return;
+    const pos = new qq.maps.LatLng(u.lat, u.lng);
+    const dist = qq.maps.geometry.spherical
+      .computeDistanceBetween(me, pos);
+    if (dist > visibleRange) {
       markers[u.username]?.setMap(null);
       return;
     }
-    if(!markers[u.username]){
-      markers[u.username]=new qq.maps.Marker({
-        map,position:pos,
-        label:{content:u.username,offset:new qq.maps.Size(0,-20)}
+    if (!markers[u.username]) {
+      markers[u.username] = new qq.maps.Marker({
+        map, position: pos,
+        label: { content: u.username, offset: new qq.maps.Size(0, -20) }
       });
       qq.maps.event.addListener(
-        markers[u.username],"mouseover",
-        ()=>showPM(u.username,pos)
+        markers[u.username], "mouseover",
+        () => showPM(u.username, pos)
       );
-    }else{
+    } else {
       markers[u.username].setPosition(pos);
       markers[u.username].setMap(map);
     }
   });
 }
 
-/* ========= 聊天 ========= */
-function showPM(user,pos){
-  const info=new qq.maps.InfoWindow({
-    map,position:pos,
-    content:`<div class="pmHint">私聊 ${user}</div>`
+/* ========= 聊天逻辑 ========= */
+function showPM(user, pos) {
+  const info = new qq.maps.InfoWindow({
+    map, position: pos,
+    content: `<div class="pmHint">私聊 ${user}</div>`
   });
   info.open();
-  qq.maps.event.addListenerOnce(info,"domready",()=>{
-    document.querySelector(".pmHint").onclick=()=>{
+  qq.maps.event.addListenerOnce(info, "domready", () => {
+    document.querySelector(".pmHint").onclick = () => {
       openPrivate(user);
       info.close();
     };
   });
 }
 
-function openPrivate(user){
-  chats[user]??=[];
-  addTab(user,user);
+function openPrivate(user) {
+  chats[user] ??= [];
+  addTab(user, user);
   switchTab(user);
 }
 
-function addTab(key,name){
-  if(document.getElementById("tab-"+key))return;
-  const t=document.createElement("div");
-  t.className="chatTab";
-  t.id="tab-"+key;
-  t.innerText=name;
-  t.onclick=e=>{
+function addTab(key, name) {
+  if (document.getElementById("tab-" + key)) return;
+  const t = document.createElement("div");
+  t.className = "chatTab";
+  t.id = "tab-" + key;
+  t.innerText = name;
+  t.onclick = e => {
     e.stopPropagation();
     switchTab(key);
   };
   chatTabs.appendChild(t);
 }
 
-function switchTab(key){
-  currentTab=key;
+function switchTab(key) {
+  currentTab = key;
   document.querySelectorAll(".chatTab")
-    .forEach(t=>t.classList.remove("active"));
-  document.getElementById("tab-"+key)?.classList.add("active");
+    .forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-" + key)?.classList.add("active");
   renderChat();
 }
 
-function renderChat(){
-  chatBox.innerHTML=(chats[currentTab]||[])
-    .map(m=>`<div>${m}</div>`).join("");
-  chatBox.scrollTop=chatBox.scrollHeight;
+function renderChat() {
+  chatBox.innerHTML = (chats[currentTab] || [])
+    .map(m => `<div>${m}</div>`).join("");
+  chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-function sendChat(){
-  const msg=chatInput.value.trim();
-  if(!msg||!socket)return;
+function sendChat() {
+  const msg = chatInput.value.trim();
+  if (!msg || !socket || socket.readyState !== 1) return;
   socket.send(JSON.stringify({
-    type:"chat",
+    type: "chat",
     msg,
-    to:currentTab==="public"?null:currentTab
+    to: currentTab === "public" ? null : currentTab
   }));
-  chatInput.value="";
+  chatInput.value = "";
 }
 </script>
 </body>
