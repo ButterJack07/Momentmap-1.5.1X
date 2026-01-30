@@ -99,7 +99,7 @@ html,body{margin:0;height:100%;overflow:hidden;font-family:Arial}
    WebSocket 自动识别逻辑
    ======================= */
 // 自动将 https:// 替换为 wss://，并在路径后追加 /ws
-const WS_URL = window.location.origin.replace(/^http/, 'ws') + "/ws";
+const WS_URL = "ws://114.55.106.27:3000";
 
 let map, socket, currentUser;
 let myPos = null, visibleRange = 1000;
@@ -339,3 +339,4 @@ function sendChat() {
 </script>
 </body>
 </html>
+
