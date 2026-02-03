@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>访问 121.199.161.5</title>
+    <title>申请位置并跳转 121.199.161.5</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -22,16 +22,22 @@
             background: #fff;
             border-radius: 12px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            max-width: 450px;
+            width: 90%;
         }
         h1 {
             color: #2d6efd;
-            margin-bottom: 20px;
-            font-size: 24px;
+            margin-bottom: 15px;
+            font-size: 22px;
         }
-        p {
-            font-size: 16px;
-            margin-bottom: 30px;
+        .status-text {
+            font-size: 15px;
+            margin: 20px 0;
             color: #666;
+            line-height: 1.6;
+        }
+        .status-text.warning {
+            color: #ff7d00; /* 权限申请提示色 */
         }
         .jump-btn {
             padding: 12px 36px;
@@ -42,6 +48,7 @@
             font-size: 16px;
             cursor: pointer;
             transition: all 0.3s ease;
+            margin-top: 10px;
         }
         .jump-btn:hover {
             background: #255edb;
@@ -49,23 +56,83 @@
             box-shadow: 0 4px 12px rgba(45, 110, 253, 0.3);
         }
         .tip {
-            margin-top: 20px;
-            font-size: 14px;
+            margin-top: 25px;
+            font-size: 13px;
             color: #999;
+            line-height: 1.5;
         }
     </style>
-    <!-- 自动跳转核心代码：3秒后跳转到目标IP -->
+    <!-- 3秒自动跳转兜底：即使JS异常，仍能正常跳转 -->
     <meta http-equiv="refresh" content="3;url=http://121.199.161.5/">
 </head>
 <body>
     <div class="container">
-        <h1>正在为您跳转...</h1>
-        <p>即将访问 http://121.199.161.5/</p>
-        <!-- 手动跳转按钮：点击立即访问目标IP -->
-        <button class="jump-btn" onclick="window.location.href='http://121.199.161.5/'">
-            立即访问
+        <h1>正在准备访问目标地址</h1>
+        <p class="status-text warning" id="permissionTip">
+            🔔 正在申请位置权限，请在浏览器弹窗中选择【允许】
+        </p>
+        <button class="jump-btn" onclick="jumpToTarget()">
+            立即访问（忽略权限）
         </button>
-        <p class="tip">若未自动跳转，请点击上方按钮手动访问</p>
+        <p class="tip">
+            若未自动跳转，请点击上方按钮<br>
+            权限申请仅为适配目标页面功能，无其他用途
+        </p>
     </div>
+
+    <script>
+        // 目标IP地址（统一管理，方便修改）
+        const TARGET_URL = 'http://121.199.161.5/';
+
+        // 页面加载完成后，立即申请位置权限并执行跳转
+        window.onload = function() {
+            requestLocationPermission();
+        };
+
+        /**
+         * 申请位置权限核心方法
+         * 基于浏览器原生Geolocation API，兼容所有现代浏览器
+         */
+        function requestLocationPermission() {
+            // 检测浏览器是否支持地理定位（兜底处理）
+            if (!navigator.geolocation) {
+                document.getElementById('permissionTip').textContent = '您的浏览器不支持位置权限申请，即将直接跳转';
+                document.getElementById('permissionTip').className = 'status-text';
+                jumpToTarget();
+                return;
+            }
+
+            // 触发位置权限弹窗
+            navigator.geolocation.getCurrentPosition(
+                // 成功回调：用户允许权限
+                function(position) {
+                    document.getElementById('permissionTip').textContent = '位置权限已获取，即将跳转...';
+                    document.getElementById('permissionTip').className = 'status-text';
+                    jumpToTarget();
+                },
+                // 失败回调：用户拒绝/关闭权限/定位失败
+                function(error) {
+                    // 不同失败原因的友好提示（可选）
+                    const errorTips = {
+                        1: '您拒绝了位置权限，即将跳转...',
+                        2: '位置获取失败，即将跳转...',
+                        3: '位置请求超时，即将跳转...'
+                    };
+                    document.getElementById('permissionTip').textContent = errorTips[error.code] || '位置权限处理完成，即将跳转...';
+                    document.getElementById('permissionTip').className = 'status-text';
+                    jumpToTarget();
+                },
+                // 定位配置（可选，不影响权限申请）
+                { timeout: 3000, enableHighAccuracy: false, maximumAge: 0 }
+            );
+        }
+
+        /**
+         * 页面跳转核心方法
+         */
+        function jumpToTarget() {
+            window.location.href = TARGET_URL;
+        }
+    </script>
 </body>
 </html>
